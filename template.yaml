@@ -1,0 +1,303 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Metadata:
+    Generator: "former2"
+Description: ""
+
+Parameters:
+  S3BucketName:
+    Type: String
+    Description: Name of the bucket to be created
+    Default: customlabels-bee-dataset
+
+  KMSAliasName:
+    Type: String
+    Description: Name of the KMS Alias used to encrypt the SQS Queue
+    Default: bee-detection-queue-key
+
+  SQSName:
+    Type: String
+    Description: Name of the SQS Queue
+    Default: bee-detection-queue
+
+
+Resources:
+
+    S3Bucket:
+        Type: "AWS::S3::Bucket"
+        DependsOn: SQSQueuePolicy
+        Properties:
+            BucketName: !Ref S3BucketName
+            PublicAccessBlockConfiguration:
+              BlockPublicAcls: true
+              BlockPublicPolicy: true
+              IgnorePublicAcls: true
+              RestrictPublicBuckets: true
+            BucketEncryption: 
+                ServerSideEncryptionConfiguration: 
+                  - 
+                    ServerSideEncryptionByDefault: 
+                        SSEAlgorithm: "AES256"
+                    BucketKeyEnabled: false
+            LoggingConfiguration: 
+                DestinationBucketName: !Ref S3BucketName
+                LogFilePrefix: "logs/"
+            NotificationConfiguration: 
+                QueueConfigurations: 
+                  - 
+                    Event: "s3:ObjectCreated:*"
+                    Filter: 
+                        S3Key: 
+                            Rules: 
+                              - Name: "Prefix"
+                                Value: "test_images/"
+                              - Name: "Suffix"
+                                Value: ".jpg"
+                    Queue: !GetAtt SQSQueue.Arn
+
+    
+    S3BucketPolicy:
+        Type: "AWS::S3::BucketPolicy"
+        Properties:
+            Bucket: !Ref S3Bucket
+            PolicyDocument: 
+                Version: "2012-10-17"
+                Statement: 
+                  - 
+                    Sid: "AWSRekognitionS3AclBucketRead20191011"
+                    Effect: "Allow"
+                    Principal: 
+                        Service: "rekognition.amazonaws.com"
+                    Action: 
+                      - "s3:GetBucketAcl"
+                      - "s3:GetBucketLocation"
+                    Resource: !Sub "arn:aws:s3:::${S3BucketName}"
+                  - 
+                    Sid: "AWSRekognitionS3GetBucket20191011"
+                    Effect: "Allow"
+                    Principal: 
+                        Service: "rekognition.amazonaws.com"
+                    Action: 
+                      - "s3:GetObject"
+                      - "s3:GetObjectAcl"
+                      - "s3:GetObjectVersion"
+                      - "s3:GetObjectTagging"
+                    Resource: !Sub "arn:aws:s3:::${S3BucketName}/*"
+                  - 
+                    Sid: "AWSRekognitionS3ACLBucketWrite20191011"
+                    Effect: "Allow"
+                    Principal: 
+                        Service: "rekognition.amazonaws.com"
+                    Action: "s3:GetBucketAcl"
+                    Resource: !Sub "arn:aws:s3:::${S3BucketName}"
+                  - 
+                    Sid: "AWSRekognitionS3PutObject20191011"
+                    Effect: "Allow"
+                    Principal: 
+                        Service: "rekognition.amazonaws.com"
+                    Action: "s3:PutObject"
+                    Resource: !Sub "arn:aws:s3:::${S3BucketName}/*"
+                    Condition: 
+                        StringEquals: 
+                            "s3:x-amz-acl": "bucket-owner-full-control"
+
+    SQSQueue:
+        Type: "AWS::SQS::Queue"
+        Properties:
+            DelaySeconds: "0"
+            KmsMasterKeyId: !Ref KMSAlias
+            KmsDataKeyReusePeriodSeconds: "300"
+            MaximumMessageSize: "262144"
+            MessageRetentionPeriod: "345600"
+            ReceiveMessageWaitTimeSeconds: "0"
+            VisibilityTimeout: "60"
+            QueueName: !Sub "${SQSName}"
+
+    SQSQueuePolicy:
+        Type: "AWS::SQS::QueuePolicy"
+        Properties:
+            PolicyDocument: !Sub |
+                {
+                    "Version": "2008-10-17",
+                    "Id": "__default_policy_ID",
+                    "Statement": [
+                        {
+                            "Sid": "__owner_statement",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": "arn:aws:iam::${AWS::AccountId}:root"
+                            },
+                            "Action": "SQS:*",
+                            "Resource": "${SQSQueue.Arn}"
+                        },
+                        {
+                            "Sid": "example-statement-ID",
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "s3.amazonaws.com"
+                            },
+                            "Action": "SQS:SendMessage",
+                            "Resource": "${SQSQueue.Arn}",
+                            "Condition": {
+                                "StringEquals": {
+                                    "aws:SourceAccount": "${AWS::AccountId}"
+                                },
+                                "ArnLike": {
+                                    "aws:SourceArn": "arn:aws:s3::*:${S3BucketName}"
+                                }
+                            }
+                        }
+                    ]
+                }
+            Queues: 
+              - !Sub "https://sqs.${AWS::Region}.amazonaws.com/${AWS::AccountId}/${SQSQueue.QueueName}"
+
+    IAMRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+            Path: "/service-role/"
+            RoleName: "bee-detection-inference-role"
+            AssumeRolePolicyDocument: 
+                Version: '2012-10-17'
+                Statement:
+                    - 
+                        Effect: Allow
+                        Principal:
+                            Service: lambda.amazonaws.com
+                        Action: 'sts:AssumeRole'
+            MaxSessionDuration: 3600
+            ManagedPolicyArns: 
+              - "arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole"
+              - !Ref IAMManagedPolicy
+
+    IAMManagedPolicy:
+        Type: "AWS::IAM::ManagedPolicy"
+        Properties:
+            ManagedPolicyName: "bee-detection-AWSLambdaBasicExecutionRole"
+            Path: "/service-role/"
+            PolicyDocument: 
+                Version: '2012-10-17'
+                Statement:
+                    - 
+                        Sid: VisualEditor0
+                        Effect: Allow
+                        Action:
+                            - 'logs:CreateLogStream'
+                            - 'logs:PutLogEvents'
+                        Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/bee-detection-inference:*'
+                    - 
+                        Sid: VisualEditor1
+                        Effect: Allow
+                        Action:
+                            - 'sqs:DeleteMessage'
+                            - 's3:PutObject'
+                            - 's3:GetObject'
+                            - 'sqs:ReceiveMessage'
+                            - 'sqs:GetQueueAttributes'
+                            - 'logs:CreateLogGroup'
+                            - 'rekognition:DetectCustomLabels'
+                            - 'kms:Decrypt'
+                        Resource:
+                            - !Sub 'arn:aws:rekognition:${AWS::Region}:${AWS::AccountId}:project/*/version/*/*'
+                            - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
+                            - !Sub 'arn:aws:s3:::${S3BucketName}/*'
+                            - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${SQSName}'
+                            - !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/${KMSAliasName}'
+
+    LambdaFunction:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: "Inference code for a new uploaded"
+            FunctionName: "bee-detection-inference"
+            Handler: "index.lambda_handler"
+            ReservedConcurrentExecutions: 1
+            Code: 
+                ZipFile: |
+                  import json
+                  import boto3
+                  from urllib.parse import unquote_plus
+
+                  rekognition = boto3.client('rekognition')
+                  model = 'PROJECT-VERSION-ARN' # put here your trained model ARN
+                  min_confidence = 50 # minimum confidence percentage of the requested inference
+
+                  s3 = boto3.client('s3')
+
+                  def lambda_handler(event, context):
+                      
+                      for message in event['Records']:
+                          records = json.loads(message['body'])['Records']
+                          for record in records:
+
+                              bucket = record['s3']['bucket']['name']
+                              key = unquote_plus(record['s3']['object']['key'])
+
+                              #Call DetectCustomLabels
+                              response = rekognition.detect_custom_labels(Image={'S3Object': {'Bucket': bucket, 'Name': key}},
+                                  MinConfidence=min_confidence,
+                                  ProjectVersionArn=model)
+                                  
+                              destination_key = key + '.json'
+                              destination_path = '/tmp/response.json'
+                              
+                              with open(destination_path, 'w') as fp:
+                                  json.dump(response, fp)
+                              
+                              s3.upload_file(destination_path, bucket, destination_key)
+                              
+                      
+                      event['status'] = 'COMPLETED'
+                      return event
+            MemorySize: 128
+            Role: !GetAtt IAMRole.Arn
+            Runtime: "python3.7"
+            Timeout: 60
+            TracingConfig: 
+                Mode: "PassThrough"
+
+    LambdaEventSourceMapping:
+        Type: "AWS::Lambda::EventSourceMapping"
+        Properties:
+            BatchSize: 1
+            EventSourceArn: !GetAtt SQSQueue.Arn
+            FunctionName: !GetAtt LambdaFunction.Arn
+            Enabled: true
+            MaximumBatchingWindowInSeconds: 0
+
+
+    KMSKey:
+        Type: "AWS::KMS::Key"
+        Properties:
+            Enabled: true
+            Description: "CMK to encrypt the messages sent to the bee-detection-queue"
+            KeyUsage: "ENCRYPT_DECRYPT"
+            KeyPolicy: !Sub |
+                {
+                  "Version" : "2012-10-17",
+                  "Id" : "key-consolepolicy-3",
+                  "Statement" : [ {
+                    "Sid" : "Enable IAM User Permissions",
+                    "Effect" : "Allow",
+                    "Principal" : {
+                      "AWS" : "arn:aws:iam::${AWS::AccountId}:root"
+                    },
+                    "Action" : "kms:*",
+                    "Resource" : "*"
+                  }, {
+                    "Sid" : "example-statement-ID",
+                    "Effect" : "Allow",
+                    "Principal" : {
+                      "Service" : "s3.amazonaws.com"
+                    },
+                    "Action" : [ "kms:GenerateDataKey", "kms:Decrypt" ],
+                    "Resource" : "*"
+                  } ]
+                }
+            KeySpec: "SYMMETRIC_DEFAULT"
+            MultiRegion: false
+            EnableKeyRotation: true
+
+    KMSAlias:
+        Type: "AWS::KMS::Alias"
+        Properties:
+            AliasName: !Sub "alias/${KMSAliasName}"
+            TargetKeyId: !Ref KMSKey
