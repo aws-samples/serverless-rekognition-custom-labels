@@ -32,6 +32,8 @@ Resources:
               BlockPublicPolicy: true
               IgnorePublicAcls: true
               RestrictPublicBuckets: true
+            VersioningConfiguration:
+              Status: Enabled
             BucketEncryption: 
                 ServerSideEncryptionConfiguration: 
                   - 
@@ -64,7 +66,7 @@ Resources:
                 Statement: 
                   - 
                     Sid: "AWSRekognitionS3AclBucketRead20191011"
-                    Effect: "Allow"
+                    Effect: Allow
                     Principal: 
                         Service: "rekognition.amazonaws.com"
                     Action: 
@@ -73,7 +75,7 @@ Resources:
                     Resource: !Sub "arn:aws:s3:::${S3BucketName}"
                   - 
                     Sid: "AWSRekognitionS3GetBucket20191011"
-                    Effect: "Allow"
+                    Effect: Allow
                     Principal: 
                         Service: "rekognition.amazonaws.com"
                     Action: 
@@ -84,14 +86,14 @@ Resources:
                     Resource: !Sub "arn:aws:s3:::${S3BucketName}/*"
                   - 
                     Sid: "AWSRekognitionS3ACLBucketWrite20191011"
-                    Effect: "Allow"
+                    Effect: Allow
                     Principal: 
                         Service: "rekognition.amazonaws.com"
                     Action: "s3:GetBucketAcl"
                     Resource: !Sub "arn:aws:s3:::${S3BucketName}"
                   - 
                     Sid: "AWSRekognitionS3PutObject20191011"
-                    Effect: "Allow"
+                    Effect: Allow
                     Principal: 
                         Service: "rekognition.amazonaws.com"
                     Action: "s3:PutObject"
@@ -99,6 +101,18 @@ Resources:
                     Condition: 
                         StringEquals: 
                             "s3:x-amz-acl": "bucket-owner-full-control"
+                  - 
+                    Sid: "S3SecureTransport"
+                    Effect: Deny
+                    Action: "s3:*"
+                    Principal: "*"
+                    Resource:
+                        - !Sub "arn:aws:s3:::${S3BucketName}/*"
+                        - !Sub "arn:aws:s3:::${S3BucketName}"
+                    Condition:
+                        Bool:
+                            "aws:SecureTransport": false
+                        
 
     SQSQueue:
         Type: "AWS::SQS::Queue"
@@ -201,7 +215,7 @@ Resources:
                             - !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:*'
                             - !Sub 'arn:aws:s3:::${S3BucketName}/*'
                             - !Sub 'arn:aws:sqs:${AWS::Region}:${AWS::AccountId}:${SQSName}'
-                            - !Sub 'arn:aws:kms:${AWS::Region}:${AWS::AccountId}:alias/${KMSAliasName}'
+                            - !GetAtt KMSKey.Arn
 
     LambdaFunction:
         Type: "AWS::Lambda::Function"
@@ -270,28 +284,26 @@ Resources:
             Enabled: true
             Description: "CMK to encrypt the messages sent to the bee-detection-queue"
             KeyUsage: "ENCRYPT_DECRYPT"
-            KeyPolicy: !Sub |
-                {
-                  "Version" : "2012-10-17",
-                  "Id" : "key-consolepolicy-3",
-                  "Statement" : [ {
-                    "Sid" : "Enable IAM User Permissions",
-                    "Effect" : "Allow",
-                    "Principal" : {
-                      "AWS" : "arn:aws:iam::${AWS::AccountId}:root"
-                    },
-                    "Action" : "kms:*",
-                    "Resource" : "*"
-                  }, {
-                    "Sid" : "example-statement-ID",
-                    "Effect" : "Allow",
-                    "Principal" : {
-                      "Service" : "s3.amazonaws.com"
-                    },
-                    "Action" : [ "kms:GenerateDataKey", "kms:Decrypt" ],
-                    "Resource" : "*"
-                  } ]
-                }
+            KeyPolicy: 
+                Version: '2012-10-17'
+                Id: key-consolepolicy-3
+                Statement:
+                    - 
+                        Sid: "Enable IAM User Permissions"
+                        Effect: Allow
+                        Principal:
+                            AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+                        Action: 'kms:*'
+                        Resource: '*'
+                    - 
+                        Sid: "example-statement-ID"
+                        Effect: Allow
+                        Principal:
+                            Service: s3.amazonaws.com
+                        Action:
+                            - 'kms:GenerateDataKey'
+                            - 'kms:Decrypt'
+                        Resource: '*'
             KeySpec: "SYMMETRIC_DEFAULT"
             MultiRegion: false
             EnableKeyRotation: true
