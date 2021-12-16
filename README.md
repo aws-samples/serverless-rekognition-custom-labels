@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This repository serves as the base for a blog post. In it, we show how to
+This repository serves as the base for a [blog post](https://aws.amazon.com/blogs/machine-learning/build-a-computer-vision-model-using-amazon-rekognition-custom-labels-and-compare-the-results-with-a-custom-trained-tensorflow-model/). In it, we show how to
 create an object detection model using Amazon Rekognition Custom Labels,
 and setup a serverless architecture to trigger inference on newly uploaded
 images.
